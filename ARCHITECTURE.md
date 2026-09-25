@@ -233,6 +233,8 @@ pytest tests/test_blocking.py -v    # 43 tests covering all three passes + merge
 
 ---
 
+---
+
 ## Step 4 — `candidate_recall.py`
 
 ### Purpose
@@ -271,6 +273,108 @@ python src/entity_resolution/candidate_recall.py \
 
 ---
 
+## Blocking Experiments — `blocking_experiments.py` (Account 2)
+
+### Purpose
+Systematically search for a blocking configuration that improves on Account 1's
+3-pass baseline before deciding which configuration becomes the new canonical approach.
+Results feed the recall/cost tradeoff table that guides the final decision.
+
+> **Owner**: Account 2.  Account 1's `blocking.py` is NOT modified by this work.
+> Account 1 owns canonical blocking; Account 2 proposes a winning configuration.
+
+### Ground-truth contract (locked in)
+
+- `train_ground_truth.tsv`: `source1_entity_id → comma-separated matched_entity_ids`
+- **All matches are cross-source**: S1→S2 or S1→S3 only.  No S1×S1, S2×S2, S3×S3, or direct S2×S3.
+- One S1 entity can match multiple S2 **and** multiple S3 records simultaneously.
+- S1 entities with empty `matched_entity_ids` are **singletons** — tracked separately, never mixed into recall %.
+
+### Recall definition (correct formula)
+
+```
+recall_S1_S2 = (S2 targets found in candidates) / (total S2 targets in GT)
+               computed over ONLY S1 entities that have ≥1 S2 target
+               singletons excluded from numerator and denominator
+```
+
+### Experiment structure
+
+| Set | Focus | Experiments |
+|---|---|---|
+| **Set 1 — Parameter tuning** | Find the diminishing-returns point for existing strategies | 1a: TF-IDF top-K sweep {10, 25, 50, 100} · 1b: Rare-token rarity threshold sweep · 1c: Global cap sweep {50, 100, 200} |
+| **Set 2 — Combination logic** | Test whether re-weighting or dropping strategies changes recall | 2a: Equal-weight union vs. TF-IDF 2× priority · 2b: Ablation (drop each strategy individually) |
+| **Set 3 — New strategies** | Evaluate new blocking keys not in the baseline | 3a: Postal/numeric-token char n-gram · 3b: Country-scoped TF-IDF (name + address variants) · 3c: Address-missing fallback quality audit |
+
+### New blocking primitives (beyond Account 1's baseline)
+
+| Primitive | Description | When useful |
+|---|---|---|
+| `_rare_token_candidates` | Inverted index on tokens appearing in <X% of corpus | High-precision anchor for unique entity names |
+| `_postal_char_ngram_candidates` | TF-IDF on digit-only tokens from `normalized_address` | Same postal-code / street-number clustering |
+| `_country_scoped_tfidf_candidates` | TF-IDF restricted to same-country pairs | Eliminates cross-country false candidates under tight cap |
+
+### Design constraints
+
+- All experiment functions are **pure**: DataFrame-in → DataFrame-out, no S3 or account prefix.
+- Singletons tracked via `singleton_s1_count` / `singleton_cand_vol` fields; never affect recall %.
+- Country breakdown (`evaluate_by_country`) surfaced per experiment to catch country-specific regressions.
+- Address-missing subset recall (`evaluate_address_missing_subset`) is surfaced separately per experiment.
+
+### Output
+
+Each experiment produces an [`ExperimentResult`](src/entity_resolution/blocking_experiments.py) dataclass with:
+
+| Field | Description |
+|---|---|
+| `s1_s2` / `s1_s3` | `PairRecall` (recall, found, total, avg_candidates, singleton_vol) |
+| `addr_missing_s1_s2/s3` | Recall breakdown for address-missing S1 subset |
+| `country_s1_s2/s3` | Per-country recall for top-10 countries |
+| `recommendation` | `keep` / `drop` / `tune-further` |
+| `config` | Exact hyperparameters used |
+
+### Report
+
+The runner writes **`blocking_experiments_report.json`** to `s3://amzn-s3-ml-c/account2/reports/`.
+The primary field is `recall_cost_tradeoff_table` — a row per experiment showing:
+`recall_S1_S2 · recall_S1_S3 · avg_recall · avg_cands_S1_S2 · avg_cands_S1_S3 · addr_missing_recall · recommendation`
+
+### How to run (small sample)
+
+```bash
+python scripts/run_blocking_experiments.py \
+    --account-prefix account2 \
+    --input-account-prefix account1 \
+    --aws-profile amazon-ml-account2 \
+    --tfidf-top-k 50 \
+    --global-cap 100 \
+    --gt-sample 50000
+```
+
+Reads from: `s3://amzn-s3-ml-c/account1/processed/normalized_s{1,2,3}_sample.parquet`
+Writes to:  `s3://amzn-s3-ml-c/account2/reports/blocking_experiments_report.json`
+
+### SageMaker handoff plan
+
+All experiment functions in `blocking_experiments.py` contain no I/O.
+Import them unchanged into a SageMaker Processing Job; wrap only with S3 read/write (already scaffolded in `run_blocking_experiments.py`).
+
+```python
+# sagemaker_jobs/blocking_experiments_job.py  (future file)
+from src.entity_resolution.blocking_experiments import run_all_experiments, parse_ground_truth_df
+# ... S3 read, call run_all_experiments(), S3 write report
+```
+
+### Unit tests
+
+```bash
+pytest tests/test_blocking_experiments.py -v    # 65 tests, no AWS needed
+```
+
+Covers: GT parsing (singletons, multi-target, whitespace) · evaluate_candidates (perfect/partial/empty recall, singleton exclusion) · all 6 blocking primitives · merge_and_cap (dedup, max-score, per-entity cap) · all 3 experiment sets (smoke + monotonicity).
+
+---
+
 ## Branching & Collaboration
 
 | Account | Area | Branch convention |
@@ -283,4 +387,6 @@ python src/entity_resolution/candidate_recall.py \
 - **Never commit** TSV / Parquet / candidate table files.
 - Only commit: code, configs, tests, notebooks, small samples (≤ 1,000 rows), experiment summaries.
 - Large-file types already covered by `.gitignore`.
+
+
 
