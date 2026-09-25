@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "amazon-ml-er"
+version = "0.1.0"
+description = "Entity Resolution pipeline — Amazon ML Challenge"
+requires-python = ">=3.10"
+dependencies = [
+    "boto3",
+    "pandas",
+    "pyarrow",
+    "polars",
+    "duckdb",
+    "s3fs",
+    "rapidfuzz",
+    "scikit-learn",
+    "lightgbm",
+    "scipy",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+# Run from repo root; src package importable via pip install -e .
+testpaths = ["tests"]

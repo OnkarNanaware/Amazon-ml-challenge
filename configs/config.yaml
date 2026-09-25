@@ -1,26 +1,45 @@
+# ============================================================
+# Amazon ML Challenge — Entity Resolution Pipeline Config
+# ============================================================
+#
+# S3 PATH POLICY
+# --------------
+# account_prefix:  default "account1".  Override via:
+#   (1) --account-prefix CLI flag on any script, or
+#   (2) ACCOUNT_PREFIX=account2 environment variable
+#
+# RAW and SHARED buckets are NOT account-scoped — everyone
+# reads from the same s3://amzn-s3-ml-c/raw/ prefix.
+#
+# All other paths are derived automatically by config.py as:
+#   s3://amzn-s3-ml-c/<account_prefix>/<stage>/
+#
+# DO NOT hardcode "account1" anywhere in Python scripts;
+# always import Paths from src.entity_resolution.config.
+# ============================================================
+
+# Default account prefix (teammates set ACCOUNT_PREFIX env var or use --account-prefix)
+account_prefix: account1
+
 aws:
   region: us-east-1
   bucket: amzn-s3-ml-c
+  # profile: amazon-ml-account1  # Uncomment to hard-pin; otherwise uses AWS_PROFILE env var
 
-s3:
-  raw_prefix: raw/
-  processed_prefix: account1/processed/
-  candidates_prefix: account1/candidates/
-  features_prefix: account1/features/
-  models_prefix: account1/models/
-  outputs_prefix: account1/outputs/
-  reports_prefix: account1/reports/
-  experiments_prefix: account1/experiments/
+profiling:
+  # Rows to sample per source file.  0 = full file (SageMaker only — never run full-scale here).
+  sample_size: 10000
 
 data:
+  # S3 object keys (relative to bucket root).  All read-only raw inputs.
   train_source1: raw/train_source1.tsv
   train_source2: raw/train_source2.tsv
   train_source3: raw/train_source3.tsv
-  ground_truth: raw/train_ground_truth.tsv
+  ground_truth:  raw/train_ground_truth.tsv
 
-  test_source1: raw/test_source1.tsv
-  test_source2: raw/test_source2.tsv
-  test_source3: raw/test_source3.tsv
+  test_source1:  raw/test_source1.tsv
+  test_source2:  raw/test_source2.tsv
+  test_source3:  raw/test_source3.tsv
 
 blocking:
   max_candidates_per_entity: 100
