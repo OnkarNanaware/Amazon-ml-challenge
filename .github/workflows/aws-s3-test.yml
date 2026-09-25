@@ -1,4 +1,4 @@
-name: AWS S3 Connection Test
+name: AWS OIDC Test
 
 on:
   workflow_dispatch:
@@ -8,33 +8,27 @@ permissions:
   contents: read
 
 jobs:
-  test-s3:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v5
+      - name: Get GitHub OIDC token
+        id: oidc
+        uses: actions/github-script@v7
         with:
-          role-to-assume: arn:aws:iam::642615934768:role/GitHubActions-ML-Challenge
-          aws-region: eu-north-1
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com');
+            const payload = JSON.parse(
+              Buffer.from(token.split('.')[1], 'base64url').toString()
+            );
 
-      - name: Verify AWS account
-        run: |
-          aws sts get-caller-identity
-
-      - name: Test S3 read access
-        run: |
-          aws s3api head-object \
-            --bucket amzn-s3-ml-c \
-            --key raw/train_ground_truth.tsv
-
-      - name: Test S3 write access
-        run: |
-          echo "GitHub Actions S3 test" > github-actions-test.txt
-
-          aws s3 cp \
-            github-actions-test.txt \
-            s3://amzn-s3-ml-c/account1/github-actions-test.txt
+            console.log(JSON.stringify({
+              sub: payload.sub,
+              aud: payload.aud,
+              repository: payload.repository,
+              repository_id: payload.repository_id,
+              repository_owner: payload.repository_owner,
+              repository_owner_id: payload.repository_owner_id,
+              ref: payload.ref,
+              workflow: payload.workflow
+            }, null, 2));
