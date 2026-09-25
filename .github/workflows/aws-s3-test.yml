@@ -1,0 +1,40 @@
+name: AWS S3 Connection Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test-s3:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::642615934768:role/GitHubActions-ML-Challenge
+          aws-region: eu-north-1
+
+      - name: Verify AWS account
+        run: |
+          aws sts get-caller-identity
+
+      - name: Test S3 read access
+        run: |
+          aws s3api head-object \
+            --bucket amzn-s3-ml-c \
+            --key raw/train_ground_truth.tsv
+
+      - name: Test S3 write access
+        run: |
+          echo "GitHub Actions S3 test" > github-actions-test.txt
+
+          aws s3 cp \
+            github-actions-test.txt \
+            s3://amzn-s3-ml-c/account1/github-actions-test.txt
