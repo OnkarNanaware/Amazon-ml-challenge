@@ -119,6 +119,14 @@ _LEGAL_SUFFIX_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Also strip legal suffixes from the BEGINNING of the string.
+# Some datasets write "LLC Moncada Learning Center" (prefix form).
+# We strip only if the suffix is the first whitespace-separated token.
+_LEGAL_PREFIX_RE = re.compile(
+    r"^(?:" + "|".join(re.escape(s) for s in _LEGAL_SUFFIXES) + r")\.?\s+",
+    re.IGNORECASE,
+)
+
 # Business-name: modest abbreviation expansion applied AFTER punctuation pass.
 # Note: & → and is handled inside _normalize_punctuation_name, not here.
 # Tuples of (pattern, replacement) — applied in order, after lowercasing.
@@ -261,8 +269,11 @@ def normalize_name_series(series: pd.Series) -> tuple[pd.Series, pd.Series]:
         # 5. Abbreviation expansion (& → and, intl → international, …)
         for pattern, replacement in _NAME_ABBREV_RE:
             s = pattern.sub(replacement, s)
-        # 6. Legal suffix strip (at end of string only)
+        # 6. Legal suffix strip — trailing AND leading positions
+        #    Trailing: "Acme Corp Inc" → "Acme Corp"
+        #    Leading:  "LLC Moncada Center" → "Moncada Center"
         s = _LEGAL_SUFFIX_RE.sub("", s).rstrip(" .,;:-")
+        s = _LEGAL_PREFIX_RE.sub("", s).lstrip(" .,;:-")
         # 7. Final whitespace collapse
         s = _collapse_whitespace(s)
 
@@ -331,19 +342,24 @@ def normalize_country_series(series: pd.Series) -> pd.Series:
 # Public API — pure function, no S3 / path dependencies
 # ---------------------------------------------------------------------------
 
-def normalize_batch(df: pd.DataFrame) -> pd.DataFrame:
+def normalize_batch(df: pd.DataFrame, source: str | None = None) -> pd.DataFrame:
     """
     Normalize a batch of entity records.
 
     Parameters
     ----------
-    df : pd.DataFrame
+    df     : pd.DataFrame
         Must contain columns: entity_id, business_name, business_address, country.
         Extra columns are passed through unchanged.
+    source : str | None
+        Source tag to stamp on every row, e.g. 's1', 's2', 's3'.
+        If provided, a 'source' column is added (or overwritten) in the output.
+        Required for downstream blocking and recall evaluation.
 
     Returns
     -------
     pd.DataFrame with additional columns:
+        source                — source tag ('s1'/'s2'/'s3') if provided
         original_name         — copy of raw business_name
         original_address      — copy of raw business_address
         original_country      — copy of raw country
@@ -356,6 +372,10 @@ def normalize_batch(df: pd.DataFrame) -> pd.DataFrame:
     Original columns (entity_id, business_name, etc.) are preserved unchanged.
     """
     out = df.copy()
+
+    # --- Source tag (must come first so it's always column #2 after entity_id)
+    if source is not None:
+        out["source"] = source
 
     # --- Preserve originals (never overwrite raw columns) ------------------
     out[_COL_ORIG_NAME]    = out[_COL_NAME].copy()
@@ -540,17 +560,22 @@ def main() -> None:
 
     s3 = _get_s3_client(cfg.aws_profile, cfg.aws_region)
 
+    # Derive short source tag from --source arg (train_source1 -> s1)
+    src_tag = args.source.replace("train_source", "s")   # 'train_source2' -> 's2'
+
     # Input: raw TSV
     src_key = paths.raw_source_keys[args.source]
     df_raw  = _read_tsv_from_s3(s3, bucket, src_key, nrows=args.sample_size)
 
-    # Normalize
-    logger.info("Running normalize_batch on %d rows...", len(df_raw))
-    df_norm = normalize_batch(df_raw)
+    # Normalize — inject source tag so every row is labelled
+    logger.info("Running normalize_batch on %d rows (source=%s)...", len(df_raw), src_tag)
+    df_norm = normalize_batch(df_raw, source=src_tag)
     logger.info("Normalization complete.")
 
-    # Output: Parquet to PROCESSED
-    out_key = args.output_key or (paths.key(paths.PROCESSED) + "normalized_sample.parquet")
+    # Output: per-source named Parquet in PROCESSED
+    # Default: normalized_s1_sample.parquet / normalized_s2_sample.parquet / etc.
+    default_key = paths.key(paths.PROCESSED) + f"normalized_{src_tag}_sample.parquet"
+    out_key = args.output_key or default_key
     _write_parquet_to_s3(df_norm, s3, bucket, out_key)
 
     # Console comparison table
@@ -559,7 +584,7 @@ def main() -> None:
     # Summary stats
     addr_miss = int(df_norm["address_missing"].sum())
     total     = len(df_norm)
-    print(f"  Summary: {total:,} rows | "
+    print(f"  Summary: {total:,} rows | source={src_tag} | "
           f"address_missing: {addr_miss:,} ({addr_miss/total*100:.2f}%) | "
           f"output: s3://{bucket}/{out_key}")
     print()

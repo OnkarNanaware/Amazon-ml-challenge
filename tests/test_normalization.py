@@ -388,3 +388,31 @@ class TestNormalizeBatch:
         assert out["normalized_country"].iloc[0] == "Germany"
         # AG suffix stripped from name
         assert "ag" not in out["normalized_name"].iloc[0].split()
+
+    # ── new: source column tests ──────────────────────────────────────────
+
+    def test_no_source_arg_no_source_column(self):
+        """Calling normalize_batch without source must NOT add a source column."""
+        df  = _name_df(["Acme Corp"])
+        out = normalize_batch(df)
+        assert "source" not in out.columns
+
+    def test_source_arg_adds_column(self):
+        """normalize_batch(df, source='s1') must add source column with correct value."""
+        df  = _name_df(["Acme Corp", "Beta LLC"])
+        out = normalize_batch(df, source="s1")
+        assert "source" in out.columns
+        assert (out["source"] == "s1").all()
+
+    def test_source_arg_s2(self):
+        """source='s2' produces the correct tag for every row."""
+        df  = _name_df(["Gamma Ltd"])
+        out = normalize_batch(df, source="s2")
+        assert out["source"].iloc[0] == "s2"
+
+    def test_source_does_not_overwrite_entity_id(self):
+        """Adding source column must not disturb entity_id."""
+        df  = _name_df(["Acme Corp"])
+        out = normalize_batch(df, source="s3")
+        assert out["entity_id"].iloc[0] == "E0"
+
