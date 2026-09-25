@@ -1,0 +1,11 @@
+# requirements-sagemaker.txt
+# Pinned dependencies for SageMaker SKLearn container (Python 3.10, framework 1.2-1)
+# These are installed by SageMaker at container start via requirements.txt discovery.
+
+lightgbm>=3.3.5,<5.0.0
+pandas>=1.5.3,<3.0.0
+scikit-learn>=1.2.0,<2.0.0
+pyarrow>=11.0.0,<17.0.0
+rapidfuzz>=3.0.0,<4.0.0
+numpy>=1.23.0,<2.0.0
+pyyaml>=6.0

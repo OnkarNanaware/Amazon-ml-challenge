@@ -42,11 +42,21 @@ import yaml
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-_DEFAULT_BUCKET         = "amzn-s3-ml-c"
-_DEFAULT_ACCOUNT_PREFIX = "account1"
-_DEFAULT_AWS_PROFILE    = "amazon-ml-account1"
-_DEFAULT_AWS_REGION     = "us-east-1"
-_DEFAULT_CONFIG_PATH    = Path("configs/config.yaml")
+_DEFAULT_BUCKET               = "amzn-s3-ml-c"
+_DEFAULT_ACCOUNT_PREFIX       = "account1"
+_DEFAULT_INPUT_ACCOUNT_PREFIX = "account1"
+_DEFAULT_AWS_PROFILE          = "amazon-ml-account1"
+_DEFAULT_AWS_REGION           = "us-east-1"
+_DEFAULT_CONFIG_PATH          = Path("configs/config.yaml")
+
+# Account 3 / Feature engineering canonical paths
+BUCKET               = _DEFAULT_BUCKET
+ACCOUNT_PREFIX       = os.environ.get("ACCOUNT_PREFIX", "account3")
+INPUT_ACCOUNT_PREFIX = os.environ.get("INPUT_ACCOUNT_PREFIX", "account1")
+INPUT_PROCESSED      = f"s3://{BUCKET}/{INPUT_ACCOUNT_PREFIX}/processed/"
+INPUT_CANDIDATES     = f"s3://{BUCKET}/{INPUT_ACCOUNT_PREFIX}/candidates/"
+FEATURES             = f"s3://{BUCKET}/{ACCOUNT_PREFIX}/features/"
+REPORTS              = f"s3://{BUCKET}/{ACCOUNT_PREFIX}/reports/"
 
 
 # ---------------------------------------------------------------------------
@@ -60,8 +70,9 @@ class Paths:
     RAW and SHARED are shared across all accounts (no prefix).
     Everything else is scoped to the account prefix.
     """
-    bucket:         str
-    account_prefix: str
+    bucket:               str
+    account_prefix:       str
+    input_account_prefix: str = "account1"
 
     # ---- Shared / raw (NO account prefix) ---------------------------------
     @property
@@ -100,6 +111,15 @@ class Paths:
     @property
     def EXPERIMENTS(self) -> str:
         return f"s3://{self.bucket}/{self.account_prefix}/experiments/"
+
+    # ---- Input sources (cross-account, e.g. reading account1 candidates) ---
+    @property
+    def INPUT_PROCESSED(self) -> str:
+        return f"s3://{self.bucket}/{self.input_account_prefix}/processed/"
+
+    @property
+    def INPUT_CANDIDATES(self) -> str:
+        return f"s3://{self.bucket}/{self.input_account_prefix}/candidates/"
 
     # ---- Raw data file keys (S3 object keys, not full URIs) ---------------
     # These are shared across all accounts; only the raw/ prefix is used.
@@ -161,6 +181,7 @@ def load_pipeline_config(
     config_path: str | Path = _DEFAULT_CONFIG_PATH,
     account_prefix: Optional[str] = None,
     aws_profile: Optional[str] = None,
+    input_account_prefix: Optional[str] = None,
 ) -> PipelineConfig:
     """
     Load pipeline configuration.
@@ -171,21 +192,17 @@ def load_pipeline_config(
       3. ``account_prefix`` key inside config.yaml
       4. Hard-coded default ``"account1"``
 
+    Priority order for input_account_prefix (highest → lowest):
+      1. ``input_account_prefix`` argument passed directly
+      2. ``INPUT_ACCOUNT_PREFIX`` environment variable
+      3. ``input_account_prefix`` key inside config.yaml
+      4. Hard-coded default ``"account1"``
+
     Priority order for aws_profile (highest → lowest):
       1. ``aws_profile`` argument passed directly
       2. ``AWS_PROFILE`` environment variable
       3. ``aws.profile`` key inside config.yaml
       4. Hard-coded default ``"amazon-ml-account1"``
-
-    Parameters
-    ----------
-    config_path    : Path to configs/config.yaml (default: "configs/config.yaml")
-    account_prefix : Override account prefix (e.g. "account3" for teammate use)
-    aws_profile    : Override AWS CLI profile name
-
-    Returns
-    -------
-    PipelineConfig
     """
     config_path = Path(config_path)
     raw: Dict[str, Any] = {}
@@ -203,6 +220,14 @@ def load_pipeline_config(
         or _DEFAULT_ACCOUNT_PREFIX
     )
 
+    # ---- Resolve input account prefix (4-level priority) -----------------
+    resolved_input_prefix = (
+        input_account_prefix
+        or os.environ.get("INPUT_ACCOUNT_PREFIX")
+        or raw.get("input_account_prefix")
+        or _DEFAULT_INPUT_ACCOUNT_PREFIX
+    )
+
     # ---- Resolve AWS profile (4-level priority) --------------------------
     resolved_profile = (
         aws_profile
@@ -214,7 +239,11 @@ def load_pipeline_config(
     bucket = aws_cfg.get("bucket", _DEFAULT_BUCKET)
     region = aws_cfg.get("region", _DEFAULT_AWS_REGION)
 
-    paths = Paths(bucket=bucket, account_prefix=resolved_prefix)
+    paths = Paths(
+        bucket=bucket,
+        account_prefix=resolved_prefix,
+        input_account_prefix=resolved_input_prefix,
+    )
 
     return PipelineConfig(
         paths       = paths,
@@ -237,7 +266,7 @@ PATHS: Paths = load_pipeline_config().paths
 
 
 # ---------------------------------------------------------------------------
-# CLI helper — add_account_prefix_arg / resolve_paths_from_args
+# CLI helpers — add_account_prefix_arg / add_input_account_prefix_arg / resolve_config_from_args
 # ---------------------------------------------------------------------------
 
 def add_account_prefix_arg(parser: "argparse.ArgumentParser") -> None:
@@ -259,6 +288,24 @@ def add_account_prefix_arg(parser: "argparse.ArgumentParser") -> None:
     )
 
 
+def add_input_account_prefix_arg(parser: "argparse.ArgumentParser") -> None:
+    """
+    Attach the --input-account-prefix argument to any argparse parser.
+
+    Allows pointing at account1's audited baseline candidates (default) or
+    account2's experimental candidates via CLI.
+    """
+    parser.add_argument(
+        "--input-account-prefix",
+        default=None,
+        metavar="INPUT_PREFIX",
+        help=(
+            "S3 input account prefix for candidates and processed data "
+            "(default: 'account1', or INPUT_ACCOUNT_PREFIX env var)."
+        ),
+    )
+
+
 def resolve_config_from_args(
     args: "argparse.Namespace",
     config_path: str | Path = _DEFAULT_CONFIG_PATH,
@@ -267,12 +314,16 @@ def resolve_config_from_args(
     Build a PipelineConfig from parsed argparse args.
 
     Expects args to have: account_prefix (from add_account_prefix_arg),
+    input_account_prefix (from add_input_account_prefix_arg),
     and optionally aws_profile (if added by the calling parser).
     """
-    account_prefix = getattr(args, "account_prefix", None)
-    aws_profile    = getattr(args, "aws_profile", None)
+    account_prefix       = getattr(args, "account_prefix", None)
+    input_account_prefix = getattr(args, "input_account_prefix", None)
+    aws_profile          = getattr(args, "aws_profile", None)
     return load_pipeline_config(
-        config_path    = config_path,
-        account_prefix = account_prefix,
-        aws_profile    = aws_profile,
+        config_path          = config_path,
+        account_prefix       = account_prefix,
+        aws_profile          = aws_profile,
+        input_account_prefix = input_account_prefix,
     )
+
