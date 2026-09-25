@@ -1,0 +1,12 @@
+boto3
+polars
+pyarrow
+duckdb
+s3fs
+rapidfuzz
+scikit-learn
+lightgbm
+scipy
+pandas
+pyyaml
+pytest

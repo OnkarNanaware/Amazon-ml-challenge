@@ -1,0 +1,42 @@
+aws:
+  region: us-east-1
+  bucket: amzn-s3-ml-c
+
+s3:
+  raw_prefix: raw/
+  processed_prefix: account1/processed/
+  candidates_prefix: account1/candidates/
+  features_prefix: account1/features/
+  models_prefix: account1/models/
+  outputs_prefix: account1/outputs/
+  reports_prefix: account1/reports/
+  experiments_prefix: account1/experiments/
+
+data:
+  train_source1: raw/train_source1.tsv
+  train_source2: raw/train_source2.tsv
+  train_source3: raw/train_source3.tsv
+  ground_truth: raw/train_ground_truth.tsv
+
+  test_source1: raw/test_source1.tsv
+  test_source2: raw/test_source2.tsv
+  test_source3: raw/test_source3.tsv
+
+blocking:
+  max_candidates_per_entity: 100
+  tfidf_top_k: 50
+  ngram_size: 3
+
+model:
+  type: lightgbm
+  random_state: 42
+
+validation:
+  metric: f0.5
+  test_size: 0.20
+  random_state: 42
+
+threshold:
+  min: 0.50
+  max: 0.99
+  step: 0.01
